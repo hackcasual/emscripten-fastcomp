@@ -138,7 +138,6 @@ NoExitRuntime("emscripten-no-exit-runtime",
               cl::init(false));
 
 static cl::opt<bool>
-
 EnableCyberDWARF("enable-cyberdwarf",
                  cl::desc("Include CyberDWARF debug information"),
                  cl::init(false));
@@ -229,6 +228,7 @@ namespace {
       unsigned MetadataNum = 1;
       std::map<Metadata *, unsigned> IndexedMetadata;
       std::map<unsigned, std::string> VtableOffsets;
+      std::map<std::string, unsigned> MDStringTypeIDs;
       std::ostringstream TypeDebugData;
       std::ostringstream TypeNameMap;
       std::ostringstream FunctionMembers;
@@ -453,6 +453,9 @@ namespace {
     }
 
     unsigned getIDForMetadata(Metadata *MD) {
+      if (MDString *MDS = dyn_cast<MDString>(MD)) {
+        return cyberDWARFData.MDStringTypeIDs[MDS->getString().str()];
+      }
       if (cyberDWARFData.IndexedMetadata.find(MD) == cyberDWARFData.IndexedMetadata.end()) {
         cyberDWARFData.IndexedMetadata[MD] = cyberDWARFData.MetadataNum++;
       }
@@ -604,7 +607,7 @@ namespace {
         if (Scope) {
           StringRef File = Scope->getFilename();
           if (Line > 0)
-            Code << " //@line " << utostr(Line) << " \"" << (File.size() > 0 ? File.str() : "?") << "\"";
+            Code << " //@line " << utostr(Line) << " col " << Loc.getCol() << " \"" << (File.size() > 0 ? File.str() : "?") << "\"";
         }
       }
     }
@@ -3749,8 +3752,13 @@ std::string JSWriter::generateDebugRecordForVar(Metadata *MD) {
 
     if (CT->getIdentifier().str() != "") {
       if (CT->isForwardDecl()) {
+        // If it's a forward declaration, don't overwrite an existing record
+        if (cyberDWARFData.MDStringTypeIDs.find(CT->getIdentifier().str()) == cyberDWARFData.MDStringTypeIDs.end()) {
+          cyberDWARFData.MDStringTypeIDs[CT->getIdentifier().str()] = cyberDWARFData.IndexedMetadata[MD];
+        }
         cyberDWARFData.TypeNameMap << "\"" << "fd_" << CT->getIdentifier().str() << "\":" << VarIDForJSON << ",";
       } else {
+        cyberDWARFData.MDStringTypeIDs[CT->getIdentifier().str()] = cyberDWARFData.IndexedMetadata[MD];
         cyberDWARFData.TypeNameMap << "\"" << CT->getIdentifier().str() << "\":" << VarIDForJSON << ",";
       }
     }

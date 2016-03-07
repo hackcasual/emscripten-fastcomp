@@ -480,6 +480,9 @@ DEF_CALL_HANDLER(llvm_dbg_declare, {
   auto const DwarfOp = cast<MetadataAsValue>(CI->getOperand(2))->getMetadata();
   std::string LocalVariableName = LocalVariableDI->getName().str();
 
+  // Make sure that any types metadata uses are serialize
+  generateDebugRecordForVar(LocalVariableType);
+
   auto VarMD = utostr(getIDForMetadata(LocalVariableType))
   + "," + VariableOffset + "," + utostr(getIDForMetadata(DwarfOp))
   + ",\"" + LocalVariableName + "\"";
@@ -491,7 +494,7 @@ DEF_CALL_HANDLER(llvm_dbg_declare, {
     return "_metadata_llvm_dbg_value_local(" + LocalVarName + "," + VarMD + ")";
   } else if (auto const *ValAsAssign = dyn_cast<ConstantAsMetadata>(AssignedValue)) {
     Declares.insert("metadata_llvm_dbg_value_constant");
-    return "_metadata_llvm_dbg_value_constant(\"" + getValueAsStr(ValAsAssign->getValue())
+    return "_metadata_llvm_dbg_value_constant(" + getValueAsStr(ValAsAssign->getValue())
     + "," + VarMD + ")";
   }
 
@@ -504,11 +507,14 @@ DEF_CALL_HANDLER(llvm_dbg_value, {
 
   auto VariableOffset = getValueAsStr(CI->getOperand(1));
   auto AssignedValue = cast<MetadataAsValue>(CI->getOperand(0))->getMetadata();
-  auto const LocalVariableMD = cast<MetadataAsValue>(CI->getOperand(1))->getMetadata();
+  auto const LocalVariableMD = cast<MetadataAsValue>(CI->getOperand(2))->getMetadata();
   auto const LocalVariableDI = cast<DILocalVariable>(LocalVariableMD);
   auto const LocalVariableType = LocalVariableDI->getRawType();
-  auto const DwarfOp = cast<MetadataAsValue>(CI->getOperand(2))->getMetadata();
+  auto const DwarfOp = cast<MetadataAsValue>(CI->getOperand(3))->getMetadata();
   std::string LocalVariableName = LocalVariableDI->getName().str();
+
+  // Make sure that any types metadata uses are serialize
+  generateDebugRecordForVar(LocalVariableType);
 
   auto VarMD = utostr(getIDForMetadata(LocalVariableType))
                + "," + VariableOffset + "," + utostr(getIDForMetadata(DwarfOp))
@@ -520,7 +526,7 @@ DEF_CALL_HANDLER(llvm_dbg_value, {
     return "_metadata_llvm_dbg_value_local(" + LocalVarName + "," + VarMD + ")";
   } else if (auto const *ValAsAssign = dyn_cast<ConstantAsMetadata>(AssignedValue)) {
     Declares.insert("metadata_llvm_dbg_value_constant");
-    return "_metadata_llvm_dbg_value_constant(\"" + getValueAsStr(ValAsAssign->getValue())
+    return "_metadata_llvm_dbg_value_constant(" + getValueAsStr(ValAsAssign->getValue())
     + "," + VarMD + ")";
   }
 
