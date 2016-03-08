@@ -469,12 +469,39 @@ DEF_CALL_HANDLER(llvm_expect_i1, {
 })
 
 DEF_CALL_HANDLER(llvm_dbg_declare, {
-  //std::string CH_##Ident(const Instruction *CI, std::string Name, int NumArgs=-1) { Code }
-  //CI->getOperand(0)->dump();
+  if (!EnableCyberDWARF)
+    return "";
+
+  auto VariableOffset = "0";
+  auto AssignedValue = cast<MetadataAsValue>(CI->getOperand(0))->getMetadata();
+  auto const LocalVariableMD = cast<MetadataAsValue>(CI->getOperand(1))->getMetadata();
+  auto const LocalVariableDI = cast<DILocalVariable>(LocalVariableMD);
+  auto const LocalVariableType = LocalVariableDI->getRawType();
+  auto const DwarfOp = cast<MetadataAsValue>(CI->getOperand(2))->getMetadata();
+  std::string LocalVariableName = LocalVariableDI->getName().str();
+
+  if (auto const *ValAsAssign = dyn_cast<LocalAsMetadata>(AssignedValue)) {
+    Declares.insert("metadata_llvm_dbg_value_local");
+    auto LocalVarName = getJSName(ValAsAssign->getValue()->stripPointerCasts());
+    return "_metadata_llvm_dbg_value_local(" + LocalVarName
+           + "," + utostr(getIDForMetadata(LocalVariableType))
+           + "," + VariableOffset + "," + utostr(getIDForMetadata(DwarfOp))
+           + ",\"" + LocalVariableName + "\")";
+  } else if (auto const *ValAsAssign = dyn_cast<ConstantAsMetadata>(AssignedValue)) {
+    Declares.insert("metadata_llvm_dbg_value_constant");
+    return "_metadata_llvm_dbg_value_constant(\"" + getValueAsStr(ValAsAssign->getValue()) + "\""
+           + "," + utostr(getIDForMetadata(LocalVariableType))
+           + "," + VariableOffset + "," + utostr(getIDForMetadata(DwarfOp))
+           + ",\"" + LocalVariableName + "\")";
+  }
+
   return "";
 })
 
 DEF_CALL_HANDLER(llvm_dbg_value, {
+  if (!EnableCyberDWARF)
+    return "";
+
   auto VariableOffset = getValueAsStr(CI->getOperand(1));
   auto AssignedValue = cast<MetadataAsValue>(CI->getOperand(0))->getMetadata();
   auto const LocalVariableMD = cast<MetadataAsValue>(CI->getOperand(2))->getMetadata();
@@ -499,8 +526,6 @@ DEF_CALL_HANDLER(llvm_dbg_value, {
   }
 
   return "";
-
-
 })
 
 DEF_CALL_HANDLER(llvm_lifetime_start, {

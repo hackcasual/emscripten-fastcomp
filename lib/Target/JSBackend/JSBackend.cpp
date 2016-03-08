@@ -58,9 +58,6 @@ using namespace llvm;
 #define assert(x) { if (!(x)) report_fatal_error(#x); }
 #endif
 
-#include <iostream>
-using namespace std;
-
 raw_ostream &prettyWarning() {
   errs().changeColor(raw_ostream::YELLOW);
   errs() << "warning:";
@@ -140,13 +137,15 @@ NoExitRuntime("emscripten-no-exit-runtime",
               cl::desc("Generate code which assumes the runtime is never exited (so atexit etc. is unneeded; see emscripten NO_EXIT_RUNTIME setting)"),
               cl::init(false));
 
+static cl::opt<bool>
+EnableCyberDWARF("enable-cyberdwarf",
+              cl::desc("Include CyberDWARF debug information"),
+              cl::init(false));
 
 extern "C" void LLVMInitializeJSBackendTarget() {
   // Register the target.
   RegisterTargetMachine<JSTargetMachine> X(TheJSBackendTarget);
 }
-
-static inline void sanitizeLocal(std::string& str);
 
 namespace {
   #define ASM_SIGNED 0
@@ -214,7 +213,7 @@ namespace {
     NameSet FuncRelocatableExterns; // which externals are accessed in this function; we load them once at the beginning (avoids a potential call in a heap access, and might be faster)
     unsigned MetadataNum;
     std::map<Metadata *, unsigned> IndexedMetadata;
-    std::map<std::string, unsigned> VtableOffsets;
+    std::map<unsigned, std::string> VtableOffsets;
     std::ostringstream TypeDebugData;
     std::ostringstream TypeNameMap;
     std::ostringstream FunctionMembers;
@@ -589,7 +588,7 @@ namespace {
         if (Scope) {
           StringRef File = Scope->getFilename();
           if (Line > 0)
-            Code << " metadata_location(" << utostr(Line) << ", \"" << (File.size() > 0 ? File.str() : "?") << "\");";
+            Code << " //@line " << utostr(Line) << " \"" << (File.size() > 0 ? File.str() : "?") << "\"";
         }
       }
     }
@@ -3066,10 +3065,6 @@ void JSWriter::processConstants() {
             NamedGlobals[Name] = getGlobalAddress(Name);
           }
         }
-        for (auto &gai : GlobalAddresses) {
-          cout << gai.first << endl;
-          NamedGlobals[gai.first] = getGlobalAddress(gai.first);
-        }
       }
     }
   }
@@ -3416,33 +3411,35 @@ void JSWriter::printModuleBody() {
     }
     Out << "]]";
   }
-  Out << "},";
+  Out << "}";
 
-  Out << "\"cyberdwarf_data\": {\n";
-  Out << "\"types\": {";
+  if (EnableCyberDWARF) {
+    Out << ",\"cyberdwarf_data\": {\n";
+    Out << "\"types\": {";
 
-  // Remove trailing comma
-  std::string TDD = TypeDebugData.str().substr(0, TypeDebugData.str().length() - 2);
-  // One Windows, paths can have \ separators
-  replace( TDD.begin(), TDD.end(), '\\', '/');
-  Out << TDD << "}, \"type_name_map\": {";
+    // Remove trailing comma
+    std::string TDD = TypeDebugData.str().substr(0, TypeDebugData.str().length() - 1);
+    // One Windows, paths can have \ separators
+    std::replace(TDD.begin(), TDD.end(), '\\', '/');
+    Out << TDD << "}, \"type_name_map\": {";
 
-  std::string TNM = TypeNameMap.str().substr(0, TypeNameMap.str().length() - 2);
-  replace(TNM.begin(), TNM.end(), '\\', '/');
-  Out << TNM << "}, \"functions\": {";
+    std::string TNM = TypeNameMap.str().substr(0, TypeNameMap.str().length() - 1);
+    std::replace(TNM.begin(), TNM.end(), '\\', '/');
+    Out << TNM << "}, \"functions\": {";
 
-  std::string FM = FunctionMembers.str().substr(0, FunctionMembers.str().length() - 2);
-  replace(FM.begin(), FM.end(), '\\', '/');
-  Out << FM << "}, \"vtable_offsets\": {";
-  bool first_elem = true;
-  for (auto VTO: VtableOffsets) {
-    if (!first_elem) {
-      Out << ",";
+    std::string FM = FunctionMembers.str().substr(0, FunctionMembers.str().length() - 1);
+    std::replace(FM.begin(), FM.end(), '\\', '/');
+    Out << FM << "}, \"vtable_offsets\": {";
+    bool first_elem = true;
+    for (auto VTO: VtableOffsets) {
+      if (!first_elem) {
+        Out << ",";
+      }
+      Out << "\"" << VTO.first << "\":\"" << VTO.second << "\"";
+      first_elem = false;
     }
-    Out << "\"" << VTO.first << "\":" << VTO.second;
-    first_elem = false;
+    Out << "}\n}";
   }
-  Out << "}\n}";
 
   Out << "\n}\n";
 }
@@ -3562,7 +3559,7 @@ void JSWriter::parseConstant(const std::string& name, const Constant* CV, int Al
 
       // VTable for the object
       if (name.compare(0, 4, "_ZTV") == 0) {
-        VtableOffsets[name] = Absolute;
+        VtableOffsets[Absolute] = name;
       }
 
       for (unsigned i = 0; i < Num; i++) {
@@ -3692,11 +3689,11 @@ std::string JSWriter::generateDebugRecordForVar(Metadata *MD) {
     << BT->getOffsetInBits()
     << ","
     << BT->getSizeInBits()
-    << "]," << endl;
+    << "],";
   }
   else if (MDString *MDS = dyn_cast<MDString>(MD)) {
     TypeDebugData << VarIDForJSON << ":"
-    << "[10,\"" << MDS->getString().str() << "\"]," << endl;
+    << "[10,\"" << MDS->getString().str() << "\"],";
   }
   else if (DIDerivedType *DT = dyn_cast<DIDerivedType>(MD)) {
     if (DT->getRawBaseType() && isa<MDString>(DT->getRawBaseType())) {
@@ -3711,7 +3708,7 @@ std::string JSWriter::generateDebugRecordForVar(Metadata *MD) {
       << "\","
       << DT->getOffsetInBits()
       << ","
-      << DT->getSizeInBits() << "]," << endl;
+      << DT->getSizeInBits() << "],";
     }
     else {
       if (IndexedMetadata.find(DT->getRawBaseType()) == IndexedMetadata.end()) {
@@ -3728,13 +3725,13 @@ std::string JSWriter::generateDebugRecordForVar(Metadata *MD) {
         << ","
         << DT->getOffsetInBits()
         << ","
-        << DT->getSizeInBits() << "]," << endl;
+        << DT->getSizeInBits() << "],";
     }
   }
   else if (DICompositeType *CT = dyn_cast<DICompositeType>(MD)) {
 
     if (CT->getIdentifier().str() != "") {
-      TypeNameMap << "\"" << CT->getIdentifier().str() << "\":" << VarIDForJSON << "," << endl;
+      TypeNameMap << "\"" << CT->getIdentifier().str() << "\":" << VarIDForJSON << ",";
     }
 
     // Pull in debug info for any used elements before emitting ours
@@ -3742,18 +3739,17 @@ std::string JSWriter::generateDebugRecordForVar(Metadata *MD) {
       generateDebugRecordForVar(e);
     }
 
-
     TypeDebugData << VarIDForJSON << ":"
       << "[2, \""
       << CT->getName().str()
-      << "\",\""
-      << CT->getIdentifier().str()
       << "\","
       << CT->getTag()
+      << ",\""
+      << CT->getIdentifier().str()
+      << "\","
+      << CT->getOffsetInBits()
       << ","
       << CT->getSizeInBits()
-      << ","
-      << CT->getOffsetInBits()
       << ",[";
 
     bool first_elem = true;
@@ -3765,24 +3761,24 @@ std::string JSWriter::generateDebugRecordForVar(Metadata *MD) {
       TypeDebugData << generateDebugRecordForVar(e);
     }
 
-    TypeDebugData << "]]," << endl;
+    TypeDebugData << "]],";
 
   }
   else if (DISubroutineType *ST = dyn_cast<DISubroutineType>(MD)) {
     TypeDebugData << VarIDForJSON << ":"
-    << "[3," << ST->getTag() << "]," << endl;
+    << "[3," << ST->getTag() << "],";
   }
   else if (DISubrange *SR = dyn_cast<DISubrange>(MD)) {
     TypeDebugData << VarIDForJSON << ":"
-    << "[4," << SR->getCount() << "]," << endl;
+    << "[4," << SR->getCount() << "],";
   }
   else if (DISubprogram *SP = dyn_cast<DISubprogram>(MD)) {
     TypeDebugData << VarIDForJSON << ":"
-    << "[5,\"" << SP->getName().str() << "\"]," << endl;
+    << "[5,\"" << SP->getName().str() << "\"],";
   }
   else if (DIEnumerator *E = dyn_cast<DIEnumerator>(MD)) {
     TypeDebugData << VarIDForJSON << ":"
-    << "[6,\"" << E->getName().str() << "\"," << E->getValue() << "]," << endl;
+    << "[6,\"" << E->getName().str() << "\"," << E->getValue() << "],";
   }
   else {
     //MD->dump();
@@ -3812,7 +3808,7 @@ void JSWriter::buildCyberDWARFData() {
         first_elem = false;
         FunctionMembers << "\"" << V->getName().str() << "\":" << generateDebugRecordForVar(RT);
       }
-      FunctionMembers << "}," << endl;
+      FunctionMembers << "},";
     }
   }
 
@@ -3897,7 +3893,8 @@ bool JSWriter::runOnModule(Module &M) {
   assert(Relocatable ? EmulatedFunctionPointers : true);
 
   // Build debug data first, so that inline metadata can reuse the indicies
-  buildCyberDWARFData();
+  if (EnableCyberDWARF)
+    buildCyberDWARFData();
 
   setupCallHandlers();
 
