@@ -3819,6 +3819,20 @@ std::string JSWriter::generateDebugRecordForVar(Metadata *MD) {
     cyberDWARFData.TypeDebugData << VarIDForJSON << ":"
     << "[6,\"" << E->getName().str() << "\"," << E->getValue() << "],";
   }
+  else if (DIExpression *E = dyn_cast<DIExpression>(MD)) {
+    // DIExrpressions are associated with metadata intrinsics
+    // They represent a sequence of DWARF operations or arguments to those operations
+    // The element values are well defined in the DWARF spec, and should be stable
+
+    cyberDWARFData.TypeDebugData << VarIDForJSON << ":"
+    << "[99";
+
+    for (auto elem: E->getElements()) {
+      cyberDWARFData.TypeDebugData << "," << elem;
+    }
+
+    cyberDWARFData.TypeDebugData << "],";
+  }
   else {
     //MD->dump();
   }
